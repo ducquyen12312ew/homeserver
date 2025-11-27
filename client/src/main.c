@@ -9,7 +9,7 @@
 #include <arpa/inet.h>
 #include <json-c/json.h>
 
-#define SERVER_PORT 9999
+#define SERVER_PORT 6666
 
 typedef struct {
     GtkWidget *window;

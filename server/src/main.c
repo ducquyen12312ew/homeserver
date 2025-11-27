@@ -5,22 +5,19 @@
 
 void sig_handler(int sig) {
     (void)sig;
-    printf("\nStop\n");
+    printf("\nStopping...\n");
     srv_stop();
     exit(0);
 }
 
 int main(void) {
-    printf("============================\n");
-    printf("  Smart Home Server v1.0\n");
-    printf("  C11 - GCC - Ubuntu\n");
-    printf("============================\n\n");
+    printf("C11 + GTK PROJECT\n\n");
     
     signal(SIGINT, sig_handler);
     signal(SIGTERM, sig_handler);
     
     if (srv_init() < 0) {
-        fprintf(stderr, "Init fail\n");
+        fprintf(stderr, "Init failed\n");
         return 1;
     }
     

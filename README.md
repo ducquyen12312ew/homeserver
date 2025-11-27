@@ -1,52 +1,135 @@
-# Smart Home IoT Server
+# Smart Home IoT System - C11 + GTK + ESP32
 
-Server TCP/IP bằng C11 để điều khiển thiết bị ESP32 qua JSON.
+Hệ thống IoT điều khiển thiết bị thông minh với kiến trúc 3 tầng: GTK Client - C11 Server - ESP32 Hardware.
 
-## Tính năng
+## 📋 Tổng quan
 
-- TCP Socket Server (port 8888)
-- Multi-threading (pthread)
-- Giao thức JSON (json-c)
-- Hỗ trợ: Đèn, Quạt, Điều hòa
+- **Server:** C11 multi-threaded TCP server (Ubuntu)
+- **Client:** GTK3 GUI application (Ubuntu)
+- **Device:** ESP32 với OLED SSD1306 display
+- **Protocol:** JSON over TCP
+- **Port:** 6666
 
-## Yêu cầu
+## 🏗️ Kiến trúc
+```
+GTK Client (C) ←→ Ubuntu C11 Server ←→ ESP32 (Arduino)
+   (GUI)              (Gateway)          (Hardware)
+```
 
-- Ubuntu 20.04+
-- GCC 9.x+ (C11 standard)
-- libjson-c-dev
+## ✨ Tính năng
 
-## Cài đặt
+### Đã triển khai (11/20 điểm)
+
+- ✅ Xử lý truyền dòng (JSON delimiter)
+- ✅ Socket I/O với multi-threading
+- ✅ Xác thực người dùng (login)
+- ✅ Đăng ký thiết bị tự động
+- ✅ Quét và liệt kê thiết bị
+- ✅ Kết nối và quản lý nhiều thiết bị
+- ✅ Điều khiển bật/tắt thiết bị
+- ✅ Truy vấn trạng thái thiết bị
+- ✅ Heartbeat monitoring (30s)
+
+### Có thể mở rộng
+
+- Đổi mật khẩu thiết bị
+- Điều khiển tốc độ quạt (PWM)
+- Chế độ điều hòa (cool/heat/dry)
+- Tính toán điện năng tiêu thụ
+- Hẹn giờ bật/tắt
+- Ghi log hoạt động
+- Quản lý nhà/phòng/thiết bị
+
+## 🛠️ Công nghệ
+
+**Server:**
+- C11 standard
+- pthread (multi-threading)
+- json-c (JSON parsing)
+- POSIX socket API
+
+**Client:**
+- C11 standard
+- GTK+ 3.0 (GUI framework)
+- json-c (JSON parsing)
+
+**ESP32:**
+- Arduino C++
+- WiFi library
+- ArduinoJson
+- Adafruit SSD1306 (OLED)
+
+## 📦 Cài đặt
+
+### Yêu cầu
+
+**Ubuntu:**
 ```bash
-# Clone
-git clone https://github.com/username/homeserver.git
-cd homeserver
-
-# Cài dependencies
 sudo apt update
-sudo apt install -y build-essential gcc make libjson-c-dev
+sudo apt install -y build-essential libgtk-3-dev libjson-c-dev
+```
 
-# Biên dịch
+**Arduino IDE:**
+- ESP32 Board Manager
+- ArduinoJson library
+- Adafruit SSD1306 library
+- Adafruit GFX library
+
+### Build Server
+```bash
+cd server
 make
 ```
 
-## Chạy Server
+### Build Client
 ```bash
+cd client
+make
+```
+
+### Upload ESP32
+
+1. Mở Arduino IDE
+2. Chọn Board: ESP32 Dev Module
+3. Sửa WiFi SSID/Password và Server IP trong code
+4. Upload
+
+## 🚀 Chạy hệ thống
+
+### 1. Chạy Server
+```bash
+cd server
 make run
 ```
 
-Server lắng nghe tại `0.0.0.0:8888`
+### 2. Chạy Client
+```bash
+cd client
+make run
+```
 
-## Giao thức
+### 3. ESP32
 
-### 1. Đăng ký thiết bị
+- Cấp nguồn qua USB
+- ESP32 tự động kết nối WiFi và đăng ký với Server
 
-Request (ESP32 → Server):
+### 4. Điều khiển
+
+- Click **Connect** để kết nối Server
+- Click **Scan Devices** để quét thiết bị
+- Chọn thiết bị từ dropdown
+- Click **Turn ON/OFF** để điều khiển
+
+## 📡 Giao thức JSON
+
+### Register (ESP32 → Server)
 ```json
 {
   "type": "request",
-  "from": "ESP32_ABC123",
+  "from": "ESP32_eef4e9d4",
   "to": "server",
   "action": "register",
+  "timestamp": 12345,
   "data": {
     "device_type": "light",
     "password": "123456"
@@ -54,26 +137,14 @@ Request (ESP32 → Server):
 }
 ```
 
-Response (Server → ESP32):
+### Control (Client → Server → ESP32)
 ```json
 {
-  "type": "response",
-  "from": "server",
-  "to": "ESP32_ABC123",
-  "action": "register",
-  "data": {
-    "status": "success",
-    "device_id": "ESP32_ABC123"
-  }
-}
-```
-
-### 2. Điều khiển thiết bị
-
-Đèn:
-```json
-{
+  "type": "request",
+  "from": "gtk_client",
+  "to": "ESP32_eef4e9d4",
   "action": "control",
+  "timestamp": 67890,
   "data": {
     "device_type": "light",
     "state": true
@@ -81,98 +152,105 @@ Response (Server → ESP32):
 }
 ```
 
-Quạt:
+### Status Response (ESP32 → Server → Client)
 ```json
 {
-  "action": "control",
+  "type": "response",
+  "from": "ESP32_eef4e9d4",
+  "to": "gtk_client",
+  "action": "status",
+  "timestamp": 11111,
   "data": {
-    "device_type": "fan",
-    "state": true,
-    "speed": 2
-  }
-}
-```
-Speed: 1-3
-
-Điều hòa:
-```json
-{
-  "action": "control",
-  "data": {
-    "device_type": "ac",
-    "state": true,
-    "mode": "cool",
-    "temperature": 24
-  }
-}
-```
-Mode: cool, heat, dry
-Temperature: 18-30
-
-### 3. Lấy trạng thái
-
-Request:
-```json
-{
-  "type": "request",
-  "from": "client_001",
-  "to": "ESP32_ABC123",
-  "action": "status"
-}
-```
-
-Response:
-```json
-{
-  "data": {
-    "device_type": "fan",
+    "device_type": "light",
     "state": "on",
-    "speed": 2,
-    "power": 45,
-    "uptime_today": 3.5
+    "power": 10,
+    "uptime_today": 2.5
   }
 }
 ```
 
-## Công suất tiêu thụ
+## 🔌 Cấu hình phần cứng
 
-| Thiết bị | Trạng thái | Công suất |
-|----------|-----------|-----------|
-| Đèn | ON | 10W |
-| Quạt Speed 1 | ON | 30W |
-| Quạt Speed 2 | ON | 45W |
-| Quạt Speed 3 | ON | 60W |
-| AC Cool 24°C | ON | 1200W |
-| AC Heat 24°C | ON | 1500W |
-| AC Dry | ON | 800W |
+### ESP32 Pinout
 
-## Cấu trúc thư mục
+- **OLED SSD1306:**
+  - SDA: GPIO 21
+  - SCL: GPIO 22
+  - VCC: 3.3V
+  - GND: GND
+
+- **LED Status (Optional):**
+  - LED Green: GPIO 12 (Online)
+  - LED Red: GPIO 13 (Offline/Error)
+
+## 🌐 Cấu hình mạng
+
+### VMware (nếu dùng Ubuntu trong VM)
+
+1. **Network Adapter:** NAT
+2. **Port Forwarding:** 
+   - Host Port: 6666
+   - VM IP: 192.168.92.130
+   - VM Port: 6666
+
+### IP Address
+
+- Server (Ubuntu): 192.168.92.130:6666
+- Client (Ubuntu): 127.0.0.1 hoặc 192.168.92.130
+- ESP32: DHCP (ví dụ: 172.11.23.110)
+
+## 📁 Cấu trúc thư mục
 ```
 homeserver/
-├── inc/              # Header files
-│   ├── protocol.h
-│   └── server.h
-├── src/              # Source files
-│   ├── protocol.c
-│   ├── server.c
-│   └── main.c
-├── build/            # Build output
-├── Makefile
-├── GIAO_THUC.md      # Chi tiết giao thức
+├── server/
+│   ├── inc/
+│   │   ├── protocol.h
+│   │   └── server.h
+│   ├── src/
+│   │   ├── protocol.c
+│   │   ├── server.c
+│   │   └── main.c
+│   ├── build/
+│   └── Makefile
+├── client/
+│   ├── src/
+│   │   └── main.c
+│   ├── build/
+│   └── Makefile
+├── esp32/
+│   └── device.ino
 └── README.md
 ```
 
-## Test
+## 🐛 Troubleshooting
+
+### ESP32 không kết nối Server
+
+- Kiểm tra WiFi SSID/Password
+- Kiểm tra Server IP đúng
+- Kiểm tra Server đang chạy
+- Kiểm tra firewall/port forwarding
+
+### Server compile lỗi
 ```bash
-# Test với netcat
-echo '{"type":"request","from":"test","to":"server","action":"register","data":{}}' | nc localhost 8888
+sudo apt install -y libjson-c-dev
 ```
 
-## Kết nối ESP32
-
-ESP32 kết nối qua WiFi:
-```cpp
-const char* SERVER_IP = "192.168.1.100";  // IP máy chạy server
-const int SERVER_PORT = 8888;
+### Client compile lỗi
+```bash
+sudo apt install -y libgtk-3-dev
 ```
+
+### Brownout detector error (ESP32)
+
+- Đổi cáp USB chất lượng tốt
+- Cắm vào cổng USB 3.0
+- Dùng adapter 5V 2A
+
+## Tech
+
+- Server: C11 socket programming + JSON protocol
+- Client: GTK3 GUI design + network integration
+- ESP32: Arduino firmware + OLED display
+
 

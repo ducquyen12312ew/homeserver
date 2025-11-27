@@ -25,6 +25,7 @@ static ConnList list = {.cnt = 0};
 static void* handle_conn(void *arg);
 static void handle_msg(Conn *c, const char *json);
 static void route_msg(Message *m);
+static void handle_list_devices(Conn *c);
 
 int srv_init(void) {
     pthread_mutex_init(&list.mtx, NULL);
@@ -55,13 +56,13 @@ int srv_init(void) {
         return -1;
     }
     
-    printf("✓ Server on port %d\n", PORT);
+    printf("Server listening on port %d\n", PORT);
     return 0;
 }
 
 void srv_start(void) {
     running = true;
-    printf("✓ Waiting...\n\n");
+    printf("Server started\n\n");
     
     while (running) {
         struct sockaddr_in caddr;
@@ -75,12 +76,14 @@ void srv_start(void) {
         }
         
         Conn *c = malloc(sizeof(Conn));
+        memset(c, 0, sizeof(Conn));
         c->sock = csock;
         strncpy(c->ip, inet_ntoa(caddr.sin_addr), 15);
         c->port = ntohs(caddr.sin_port);
         snprintf(c->id, 31, "tmp_%d", csock);
+        c->online = true;
         
-        printf("→ New: %s:%d\n", c->ip, c->port);
+        printf("[CONNECT] %s:%d\n", c->ip, c->port);
         
         pthread_create(&c->tid, NULL, handle_conn, c);
         pthread_detach(c->tid);
@@ -90,58 +93,76 @@ void srv_start(void) {
 static void* handle_conn(void *arg) {
     Conn *c = (Conn*)arg;
     char buf[BUF_SIZE];
-    
+
     while (running) {
-        memset(buf, 0, BUF_SIZE);
         int n = recv(c->sock, buf, BUF_SIZE - 1, 0);
-        
+
         if (n <= 0) {
-            printf("← %s disc\n", c->id);
+            printf("[DISCONNECT] %s\n", c->id);
+            c->online = false;
             break;
         }
-        
-        printf("\n📨 %s:\n%s\n", c->id, buf);
+
+        buf[n] = '\0';
+
+        if (n < 5) {
+            continue;
+        }
+
+        printf("\n[RX] %s:\n%s\n", c->id, buf);
         handle_msg(c, buf);
     }
-    
+
     close(c->sock);
-    
+
     pthread_mutex_lock(&list.mtx);
     for (int i = 0; i < list.cnt; i++) {
         if (strcmp(list.conns[i].id, c->id) == 0) {
-            for (int j = i; j < list.cnt - 1; j++) {
-                list.conns[j] = list.conns[j + 1];
-            }
-            list.cnt--;
+            list.conns[i].online = false;
             break;
         }
     }
     pthread_mutex_unlock(&list.mtx);
-    
+
     free(c);
     return NULL;
 }
 
+
 static void handle_msg(Conn *c, const char *json) {
     Message *m = parse_msg(json);
     if (!m) {
-        printf("✗ Parse fail\n");
+        printf("[ERROR] Parse failed\n");
         return;
     }
     
-    printf("  %s | %s | %s → %s\n", type_str(m->type), action_str(m->action), m->from, m->to);
+    printf("[MSG] %s | %s | %s -> %s\n", type_str(m->type), action_str(m->action), m->from, m->to);
     
     if (m->action == ACT_REGISTER) {
         strncpy(c->id, m->from, 31);
         c->is_dev = true;
         
+        struct json_object *data = (struct json_object*)m->data;
+        struct json_object *dev_type;
+        if (json_object_object_get_ex(data, "device_type", &dev_type)) {
+            strncpy(c->device_type, json_object_get_string(dev_type), 15);
+        }
+        
         pthread_mutex_lock(&list.mtx);
-        if (list.cnt < MAX_CONN) {
+        bool found = false;
+        for (int i = 0; i < list.cnt; i++) {
+            if (strcmp(list.conns[i].id, c->id) == 0) {
+                list.conns[i] = *c;
+                found = true;
+                break;
+            }
+        }
+        if (!found && list.cnt < MAX_CONN) {
             list.conns[list.cnt++] = *c;
         }
         pthread_mutex_unlock(&list.mtx);
         
-        printf("✓ Device: %s\n", c->id);
+        printf("[REGISTER] Device: %s (%s)\n", c->id, c->device_type);
         
         Message *r = calloc(1, sizeof(Message));
         r->type = MSG_RESPONSE;
@@ -157,6 +178,7 @@ static void handle_msg(Conn *c, const char *json) {
         
         char *js = create_msg(r);
         send(c->sock, js, strlen(js), 0);
+        send(c->sock, "\n", 1, 0);
         
         free(js);
         free_msg(r);
@@ -166,12 +188,20 @@ static void handle_msg(Conn *c, const char *json) {
         c->is_dev = false;
         
         pthread_mutex_lock(&list.mtx);
-        if (list.cnt < MAX_CONN) {
+        bool found = false;
+        for (int i = 0; i < list.cnt; i++) {
+            if (strcmp(list.conns[i].id, c->id) == 0) {
+                list.conns[i] = *c;
+                found = true;
+                break;
+            }
+        }
+        if (!found && list.cnt < MAX_CONN) {
             list.conns[list.cnt++] = *c;
         }
         pthread_mutex_unlock(&list.mtx);
         
-        printf("✓ Client: %s\n", c->id);
+        printf("[LOGIN] Client: %s\n", c->id);
         
         Message *r = calloc(1, sizeof(Message));
         r->type = MSG_RESPONSE;
@@ -182,14 +212,18 @@ static void handle_msg(Conn *c, const char *json) {
         
         struct json_object *d = json_object_new_object();
         json_object_object_add(d, "status", json_object_new_string("success"));
-        json_object_object_add(d, "token", json_object_new_string("abc123"));
+        json_object_object_add(d, "token", json_object_new_string("token123"));
         r->data = d;
         
         char *js = create_msg(r);
         send(c->sock, js, strlen(js), 0);
+        send(c->sock, "\n", 1, 0);
         
         free(js);
         free_msg(r);
+    }
+    else if (m->action == ACT_LIST_DEVICES) {
+        handle_list_devices(c);
     }
     else {
         route_msg(m);
@@ -198,15 +232,52 @@ static void handle_msg(Conn *c, const char *json) {
     free_msg(m);
 }
 
+static void handle_list_devices(Conn *c) {
+    Message *r = calloc(1, sizeof(Message));
+    r->type = MSG_RESPONSE;
+    strncpy(r->from, "server", 31);
+    strncpy(r->to, c->id, 31);
+    r->action = ACT_LIST_DEVICES;
+    r->timestamp = time(NULL);
+    
+    struct json_object *devices = json_object_new_array();
+    
+    pthread_mutex_lock(&list.mtx);
+    for (int i = 0; i < list.cnt; i++) {
+        if (list.conns[i].is_dev && list.conns[i].online) {
+            struct json_object *dev = json_object_new_object();
+            json_object_object_add(dev, "id", json_object_new_string(list.conns[i].id));
+            json_object_object_add(dev, "type", json_object_new_string(list.conns[i].device_type));
+            json_object_object_add(dev, "ip", json_object_new_string(list.conns[i].ip));
+            json_object_array_add(devices, dev);
+        }
+    }
+    pthread_mutex_unlock(&list.mtx);
+    
+    struct json_object *d = json_object_new_object();
+    json_object_object_add(d, "devices", devices);
+    r->data = d;
+    
+    char *js = create_msg(r);
+    send(c->sock, js, strlen(js), 0);
+    send(c->sock, "\n", 1, 0);
+    
+    printf("[LIST] Sent %zu devices to %s\n", json_object_array_length(devices), c->id);
+    
+    free(js);
+    free_msg(r);
+}
+
 static void route_msg(Message *m) {
     pthread_mutex_lock(&list.mtx);
     
     bool found = false;
     for (int i = 0; i < list.cnt; i++) {
-        if (strcmp(list.conns[i].id, m->to) == 0) {
+        if (strcmp(list.conns[i].id, m->to) == 0 && list.conns[i].online) {
             char *js = create_msg(m);
             send(list.conns[i].sock, js, strlen(js), 0);
-            printf("✓ Route: %s → %s\n", m->from, m->to);
+            send(list.conns[i].sock, "\n", 1, 0);
+            printf("[ROUTE] %s -> %s\n", m->from, m->to);
             free(js);
             found = true;
             break;
@@ -216,7 +287,7 @@ static void route_msg(Message *m) {
     pthread_mutex_unlock(&list.mtx);
     
     if (!found) {
-        printf("✗ Not found: %s\n", m->to);
+        printf("[ERROR] Destination not found: %s\n", m->to);
     }
 }
 
