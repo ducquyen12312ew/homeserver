@@ -247,10 +247,17 @@ sudo apt install -y libgtk-3-dev
 - Cắm vào cổng USB 3.0
 - Dùng adapter 5V 2A
 
-## Tech
+## Checkpoint
+| Điểm | Chức năng          | File chính                         | Hàm chính                                                                 |
+|------|---------------------|------------------------------------|---------------------------------------------------------------------------|
+| 1    | Xử lý truyền dòng  | `server.c`, `main.c`, `device.ino` | `handle_conn()`, `send_message()`, `println()`                            |
+| 2    | Socket I/O         | `server.c`                         | `srv_init()`, `srv_start()`, `pthread`                                    |
+| 1    | Xác thực           | `main.c`, `server.c`               | `on_connect_clicked()`, `ACT_LOGIN`                                       |
+| 1    | Khởi tạo thiết bị  | `device.ino`, `server.c`           | `sendRegister()`, `ACT_REGISTER`                                          |
+| 2    | Quét thiết bị      | `main.c`, `server.c`               | `on_scan_clicked()`, `handle_list_devices()`                              |
+| 2    | Kết nối thiết bị   | `device.ino`, `server.c`           | `connectServer()`, `ConnList`                                             |
+| 1    | Điều khiển         | `main.c`, `server.c`, `device.ino` | `on_control_clicked()`, `route_msg()`, `handleMessage()`                  |
+| 1    | Lấy thông tin      | `device.ino`                       | `sendStatusResponse()`                                                    |
 
-- Server: C11 socket programming + JSON protocol
-- Client: GTK3 GUI design + network integration
-- ESP32: Arduino firmware + OLED display
 
 
