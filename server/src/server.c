@@ -217,7 +217,7 @@ static void handle_msg(Conn *c, const char *json) {
         strncpy(c->id, m->from, sizeof(c->id) - 1);
         c->id[sizeof(c->id) - 1] = '\0';
         c->is_dev = false;
-
+        //khong luu duoc danh sach, loi nay
         pthread_mutex_lock(&list.mtx);
         bool found = false;
         for (int i = 0; i < list.cnt; i++) {

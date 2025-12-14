@@ -1,313 +1,99 @@
 #define _POSIX_C_SOURCE 200809L
 #include <gtk/gtk.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <json-c/json.h>
-
+#include "message_builder.h"
+#include "network_helper.h"
 #define SERVER_PORT 6666
-
-typedef struct {
-    GtkWidget *window;
-    GtkWidget *server_entry;
-    GtkWidget *status_label;
-    GtkWidget *device_list;
-    GtkWidget *device_combo;
-    GtkWidget *control_label;
-    int sock;
-    char client_id[32];
-} AppData;
-
-void show_error(GtkWidget *parent, const char *message) {
-    GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(parent),
-        GTK_DIALOG_DESTROY_WITH_PARENT,
-        GTK_MESSAGE_ERROR,
-        GTK_BUTTONS_CLOSE,
-        "%s", message);
-    gtk_dialog_run(GTK_DIALOG(dialog));
-    gtk_widget_destroy(dialog);
+typedef struct { GtkWidget *window, *server_entry, *status_label, *device_list, *device_combo, *control_label; NetContext *net; } AppData;
+void show_error(GtkWidget *parent, const char *msg) {
+    GtkWidget *d = gtk_message_dialog_new(GTK_WINDOW(parent), GTK_DIALOG_DESTROY_WITH_PARENT, GTK_MESSAGE_ERROR, GTK_BUTTONS_CLOSE, "%s", msg);
+    gtk_dialog_run(GTK_DIALOG(d)); gtk_widget_destroy(d);
 }
-
-int connect_server(const char *ip, int port) {
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) return -1;
-    
-    struct sockaddr_in addr;
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
-    addr.sin_addr.s_addr = inet_addr(ip);
-    
-    if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        close(sock);
-        return -1;
-    }
-    
-    return sock;
+ResponseParser* send_request(AppData *app, MessageBuilder *mb, const char *prefix) {
+    char *resp_str = net_send_receive(app->net, mb);
+    if (!resp_str) { char e[256]; snprintf(e, 256, "%s: No response", prefix); show_error(app->window, e); return NULL; }
+    ResponseParser *rp = response_parse(resp_str); free(resp_str);
+    if (!response_is_success(rp)) { char e[256]; snprintf(e, 256, "%s: %s", prefix, rp->error_msg); show_error(app->window, e); response_free(rp); return NULL; }
+    return rp;
 }
-
-char* send_message(int sock, const char *json_msg) {
-    send(sock, json_msg, strlen(json_msg), 0);
-    send(sock, "\n", 1, 0);
-    
-    char buffer[4096] = {0};
-    int n = recv(sock, buffer, sizeof(buffer) - 1, 0);
-    if (n <= 0) return NULL;
-    
-    return strdup(buffer);
-}
-
-void on_connect_clicked(GtkWidget *widget, gpointer data) {
-    (void)widget;
-    AppData *app = (AppData*)data;
-    const char *server_ip = gtk_entry_get_text(GTK_ENTRY(app->server_entry));
-    
-    if (strlen(server_ip) == 0) {
-        show_error(app->window, "Please enter server IP");
-        return;
-    }
-    
+void on_connect_clicked(GtkWidget *w, gpointer d) { (void)w; AppData *app = d; const char *ip = gtk_entry_get_text(GTK_ENTRY(app->server_entry));
+    if (!strlen(ip)) { show_error(app->window, "Enter server IP"); return; }
     gtk_label_set_text(GTK_LABEL(app->status_label), "Connecting...");
-    
-    app->sock = connect_server(server_ip, SERVER_PORT);
-    if (app->sock < 0) {
-        gtk_label_set_text(GTK_LABEL(app->status_label), "Disconnected");
-        show_error(app->window, "Connection failed");
-        return;
-    }
-    
-    struct json_object *login = json_object_new_object();
-    json_object_object_add(login, "type", json_object_new_string("request"));
-    json_object_object_add(login, "from", json_object_new_string("gtk_client"));
-    json_object_object_add(login, "to", json_object_new_string("server"));
-    json_object_object_add(login, "action", json_object_new_string("login"));
-    json_object_object_add(login, "timestamp", json_object_new_int(0));
-    
-    struct json_object *login_data = json_object_new_object();
-    json_object_object_add(login_data, "username", json_object_new_string("admin"));
-    json_object_object_add(login_data, "password", json_object_new_string("admin"));
-    json_object_object_add(login, "data", login_data);
-    
-    const char *login_str = json_object_to_json_string(login);
-    char *response = send_message(app->sock, login_str);
-    json_object_put(login);
-    
-    if (response) {
-        struct json_object *resp = json_tokener_parse(response);
-        struct json_object *resp_data, *status;
-        
-        if (json_object_object_get_ex(resp, "data", &resp_data) &&
-            json_object_object_get_ex(resp_data, "status", &status) &&
-            strcmp(json_object_get_string(status), "success") == 0) {
-            
-            gtk_label_set_text(GTK_LABEL(app->status_label), "Connected");
-            free(response);
-            json_object_put(resp);
-        } else {
-            gtk_label_set_text(GTK_LABEL(app->status_label), "Disconnected");
-            show_error(app->window, "Login failed");
-            close(app->sock);
-            app->sock = -1;
-            free(response);
-            json_object_put(resp);
-            return;
-        }
-    }
+    if (net_connect(app->net, ip, SERVER_PORT) < 0) { gtk_label_set_text(GTK_LABEL(app->status_label), "Disconnected"); show_error(app->window, "Connection failed"); return; }
+    MessageBuilder *mb = msg_builder_create(
+    "request", 
+    "gtk_client", 
+    "server",
+    "login");
+    msg_builder_add_string(mb, "username", "admin"); msg_builder_add_string(mb, "password", "admin");
+    ResponseParser *rp = send_request(app, mb, "Login failed"); msg_builder_free(mb);
+    if (rp) { gtk_label_set_text(GTK_LABEL(app->status_label), "Connected"); response_free(rp); }
+    else { gtk_label_set_text(GTK_LABEL(app->status_label), "Disconnected"); }
 }
-
-void on_scan_clicked(GtkWidget *widget, gpointer data) {
-    (void)widget;
-    AppData *app = (AppData*)data;
-    
-    if (app->sock < 0) {
-        show_error(app->window, "Not connected to server");
-        return;
-    }
-    
-    struct json_object *msg = json_object_new_object();
-    json_object_object_add(msg, "type", json_object_new_string("request"));
-    json_object_object_add(msg, "from", json_object_new_string("gtk_client"));
-    json_object_object_add(msg, "to", json_object_new_string("server"));
-    json_object_object_add(msg, "action", json_object_new_string("list_devices"));
-    json_object_object_add(msg, "timestamp", json_object_new_int(0));
-    json_object_object_add(msg, "data", json_object_new_object());
-    
-    const char *msg_str = json_object_to_json_string(msg);
-    char *response = send_message(app->sock, msg_str);
-    json_object_put(msg);
-    
-    if (!response) {
-        show_error(app->window, "No response from server");
-        return;
-    }
-    
+void on_scan_clicked(GtkWidget *w, gpointer d) { (void)w; AppData *app = d;
+    if (app->net->sock < 0) { show_error(app->window, "Not connected"); return; }
+    MessageBuilder *mb = msg_builder_create("request", "gtk_client", "server", "list_devices");
+    ResponseParser *rp = send_request(app, mb, "Scan failed"); msg_builder_free(mb);
+    if (!rp) return;
     gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(app->device_combo));
-    
-    struct json_object *resp = json_tokener_parse(response);
-    struct json_object *resp_data, *devices;
-    
-    if (json_object_object_get_ex(resp, "data", &resp_data) &&
-        json_object_object_get_ex(resp_data, "devices", &devices)) {
-        
-        size_t count = json_object_array_length(devices);
-        char label_text[256];
-        snprintf(label_text, sizeof(label_text), "Found %zu device(s)", count);
-        gtk_label_set_text(GTK_LABEL(app->device_list), label_text);
-        
-        for (size_t i = 0; i < count; i++) {
-            struct json_object *dev = json_object_array_get_idx(devices, i);
-            struct json_object *id, *type;
-            
-            if (json_object_object_get_ex(dev, "id", &id) &&
-                json_object_object_get_ex(dev, "type", &type)) {
-                
-                char item[128];
-                snprintf(item, sizeof(item), "%s (%s)", 
-                    json_object_get_string(id),
-                    json_object_get_string(type));
+    struct json_object *data = rp->data, *devs;
+    if (json_object_object_get_ex(data, "devices", &devs)) {
+        size_t cnt = json_object_array_length(devs); char txt[256]; snprintf(txt, 256, "Found %zu device(s)", cnt);
+        gtk_label_set_text(GTK_LABEL(app->device_list), txt);
+        for (size_t i = 0; i < cnt; i++) {
+            struct json_object *dev = json_object_array_get_idx(devs, i), *id, *type;
+            if (json_object_object_get_ex(dev, "id", &id) && json_object_object_get_ex(dev, "type", &type)) {
+                char item[128]; snprintf(item, 128, "%s (%s)", json_object_get_string(id), json_object_get_string(type));
                 gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app->device_combo), item);
             }
         }
-        
-        if (count > 0) {
-            gtk_combo_box_set_active(GTK_COMBO_BOX(app->device_combo), 0);
-        }
+        if (cnt > 0) gtk_combo_box_set_active(GTK_COMBO_BOX(app->device_combo), 0);
     }
-    
-    free(response);
-    json_object_put(resp);
+    response_free(rp);
+}
+void on_control_clicked(GtkWidget *w, gpointer d) { AppData *app = d;
+    if (app->net->sock < 0) { show_error(app->window, "Not connected"); return; }
+    gchar *sel = gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(app->device_combo));
+    if (!sel) { show_error(app->window, "No device selected"); return; }
+    char did[64]; sscanf(sel, "%s", did); g_free(sel);
+    bool on = (strcmp(gtk_button_get_label(GTK_BUTTON(w)), "Turn ON") == 0);
+    MessageBuilder *mb = msg_builder_create("request", "gtk_client", did, "control");
+    msg_builder_add_string(mb, "device_type", "light"); msg_builder_add_bool(mb, "state", on);
+    ResponseParser *rp = send_request(app, mb, "Control failed"); msg_builder_free(mb);
+    if (!rp) return;
+    const char *st = response_get_string(rp, "state"); int pwr = response_get_int(rp, "power");
+    if (st) { char txt[128]; snprintf(txt, 128, "State: %s | Power: %dW", st, pwr); gtk_label_set_text(GTK_LABEL(app->control_label), txt); }
+    response_free(rp);
 }
 
-void on_control_clicked(GtkWidget *widget, gpointer data) {
-    AppData *app = (AppData*)data;
-    
-    if (app->sock < 0) {
-        show_error(app->window, "Not connected");
-        return;
-    }
-    
-    gchar *selected = gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(app->device_combo));
-    if (!selected) {
-        show_error(app->window, "No device selected");
-        return;
-    }
-    
-    char device_id[64];
-    sscanf(selected, "%s", device_id);
-    g_free(selected);
-    
-    const char *label = gtk_button_get_label(GTK_BUTTON(widget));
-    gboolean turn_on = (strcmp(label, "Turn ON") == 0);
-    
-    struct json_object *msg = json_object_new_object();
-    json_object_object_add(msg, "type", json_object_new_string("request"));
-    json_object_object_add(msg, "from", json_object_new_string("gtk_client"));
-    json_object_object_add(msg, "to", json_object_new_string(device_id));
-    json_object_object_add(msg, "action", json_object_new_string("control"));
-    json_object_object_add(msg, "timestamp", json_object_new_int(0));
-    
-    struct json_object *ctrl_data = json_object_new_object();
-    json_object_object_add(ctrl_data, "device_type", json_object_new_string("light"));
-    json_object_object_add(ctrl_data, "state", json_object_new_boolean(turn_on));
-    json_object_object_add(msg, "data", ctrl_data);
-    
-    const char *msg_str = json_object_to_json_string(msg);
-    char *response = send_message(app->sock, msg_str);
-    json_object_put(msg);
-    
-    if (response) {
-        struct json_object *resp = json_tokener_parse(response);
-        struct json_object *resp_data, *state_obj, *power;
-        
-        if (json_object_object_get_ex(resp, "data", &resp_data) &&
-            json_object_object_get_ex(resp_data, "state", &state_obj) &&
-            json_object_object_get_ex(resp_data, "power", &power)) {
-            
-            char label_text[128];
-            snprintf(label_text, sizeof(label_text), "State: %s | Power: %dW",
-                json_object_get_string(state_obj),
-                json_object_get_int(power));
-            gtk_label_set_text(GTK_LABEL(app->control_label), label_text);
-        }
-        
-        free(response);
-        json_object_put(resp);
-    }
-}
 
-void on_window_destroy(GtkWidget *widget, gpointer data) {
-    (void)widget;
-    AppData *app = (AppData*)data;
-    if (app->sock >= 0) close(app->sock);
-    gtk_main_quit();
-}
-
+void on_destroy(GtkWidget *w, gpointer d) { (void)w; AppData *app = d; net_context_free(app->net); gtk_main_quit(); }
 int main(int argc, char *argv[]) {
-    gtk_init(&argc, &argv);
-    
-    AppData app = {0};
-    app.sock = -1;
-    strcpy(app.client_id, "gtk_client");
-    
+    gtk_init(&argc, &argv); AppData app = {0}; app.net = net_context_create("gtk_client");
     app.window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    gtk_window_set_title(GTK_WINDOW(app.window), "Smart Home Control");
+    gtk_window_set_title(GTK_WINDOW(app.window), "Smart Home");
     gtk_window_set_default_size(GTK_WINDOW(app.window), 400, 300);
-    gtk_container_set_border_width(GTK_CONTAINER(app.window), 10);
-    g_signal_connect(app.window, "destroy", G_CALLBACK(on_window_destroy), &app);
-    
-    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
-    gtk_container_add(GTK_CONTAINER(app.window), vbox);
-    
-    GtkWidget *hbox1 = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
-    gtk_box_pack_start(GTK_BOX(vbox), hbox1, FALSE, FALSE, 0);
-    
-    GtkWidget *label1 = gtk_label_new("Server IP:");
-    gtk_box_pack_start(GTK_BOX(hbox1), label1, FALSE, FALSE, 0);
-    
-    app.server_entry = gtk_entry_new();
-    gtk_entry_set_text(GTK_ENTRY(app.server_entry), "192.168.1.65");
-    gtk_box_pack_start(GTK_BOX(hbox1), app.server_entry, TRUE, TRUE, 0);
-    
-    GtkWidget *connect_btn = gtk_button_new_with_label("Connect");
-    g_signal_connect(connect_btn, "clicked", G_CALLBACK(on_connect_clicked), &app);
-    gtk_box_pack_start(GTK_BOX(hbox1), connect_btn, FALSE, FALSE, 0);
-    
-    app.status_label = gtk_label_new("Disconnected");
-    gtk_box_pack_start(GTK_BOX(vbox), app.status_label, FALSE, FALSE, 0);
-    
-    gtk_box_pack_start(GTK_BOX(vbox), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE, 5);
-    
-    GtkWidget *scan_btn = gtk_button_new_with_label("Scan Devices");
-    g_signal_connect(scan_btn, "clicked", G_CALLBACK(on_scan_clicked), &app);
-    gtk_box_pack_start(GTK_BOX(vbox), scan_btn, FALSE, FALSE, 0);
-    
-    app.device_list = gtk_label_new("No devices");
-    gtk_box_pack_start(GTK_BOX(vbox), app.device_list, FALSE, FALSE, 0);
-    
-    app.device_combo = gtk_combo_box_text_new();
-    gtk_box_pack_start(GTK_BOX(vbox), app.device_combo, FALSE, FALSE, 0);
-    
-    gtk_box_pack_start(GTK_BOX(vbox), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE, 5);
-    
-    GtkWidget *hbox2 = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
-    gtk_box_pack_start(GTK_BOX(vbox), hbox2, FALSE, FALSE, 0);
-    
-    GtkWidget *on_btn = gtk_button_new_with_label("Turn ON");
-    g_signal_connect(on_btn, "clicked", G_CALLBACK(on_control_clicked), &app);
-    gtk_box_pack_start(GTK_BOX(hbox2), on_btn, TRUE, TRUE, 0);
-    
-    GtkWidget *off_btn = gtk_button_new_with_label("Turn OFF");
-    g_signal_connect(off_btn, "clicked", G_CALLBACK(on_control_clicked), &app);
-    gtk_box_pack_start(GTK_BOX(hbox2), off_btn, TRUE, TRUE, 0);
-    
-    app.control_label = gtk_label_new("State: unknown");
-    gtk_box_pack_start(GTK_BOX(vbox), app.control_label, FALSE, FALSE, 0);
-    
-    gtk_widget_show_all(app.window);
-    gtk_main();
-    
-    return 0;
+    g_signal_connect(app.window, "destroy", G_CALLBACK(on_destroy), &app);
+    GtkWidget *vb = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5); gtk_container_add(GTK_CONTAINER(app.window), vb);
+    GtkWidget *h1 = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5); gtk_box_pack_start(GTK_BOX(vb), h1, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(h1), gtk_label_new("Server IP:"), FALSE, FALSE, 0);
+    app.server_entry = gtk_entry_new(); gtk_entry_set_text(GTK_ENTRY(app.server_entry), "192.168.1.65");
+    gtk_box_pack_start(GTK_BOX(h1), app.server_entry, TRUE, TRUE, 0);
+    GtkWidget *cb = gtk_button_new_with_label("Connect"); g_signal_connect(cb, "clicked", G_CALLBACK(on_connect_clicked), &app);
+    gtk_box_pack_start(GTK_BOX(h1), cb, FALSE, FALSE, 0);
+    app.status_label = gtk_label_new("Disconnected"); gtk_box_pack_start(GTK_BOX(vb), app.status_label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(vb), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE, 5);
+    GtkWidget *sb = gtk_button_new_with_label("Scan"); g_signal_connect(sb, "clicked", G_CALLBACK(on_scan_clicked), &app);
+    gtk_box_pack_start(GTK_BOX(vb), sb, FALSE, FALSE, 0);
+    app.device_list = gtk_label_new("No devices"); gtk_box_pack_start(GTK_BOX(vb), app.device_list, FALSE, FALSE, 0);
+    app.device_combo = gtk_combo_box_text_new(); gtk_box_pack_start(GTK_BOX(vb), app.device_combo, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(vb), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE, 5);
+    GtkWidget *h2 = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5); gtk_box_pack_start(GTK_BOX(vb), h2, FALSE, FALSE, 0);
+    GtkWidget *on = gtk_button_new_with_label("Turn ON"); g_signal_connect(on, "clicked", G_CALLBACK(on_control_clicked), &app);
+    gtk_box_pack_start(GTK_BOX(h2), on, TRUE, TRUE, 0);
+    GtkWidget *off = gtk_button_new_with_label("Turn OFF"); g_signal_connect(off, "clicked", G_CALLBACK(on_control_clicked), &app);
+    gtk_box_pack_start(GTK_BOX(h2), off, TRUE, TRUE, 0);
+    app.control_label = gtk_label_new("State: unknown"); gtk_box_pack_start(GTK_BOX(vb), app.control_label, FALSE, FALSE, 0);
+    gtk_widget_show_all(app.window); gtk_main(); return 0;
 }
