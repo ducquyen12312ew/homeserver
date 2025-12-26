@@ -1,4 +1,3 @@
-// server.c
 #include "server.h"
 #include "protocol.h"
 #include <stdio.h>
@@ -16,6 +15,7 @@
 
 static int srv_sock = -1;
 static bool running = false;
+static char admin_password[32] = "admin";
 
 typedef struct {
     Conn conns[MAX_CONN];
@@ -29,6 +29,7 @@ static void* handle_conn(void *arg);
 static void handle_msg(Conn *c, const char *json);
 static void route_msg(Message *m);
 static void handle_list_devices(Conn *c);
+static void send_error_response(Conn *c, const char *action, const char *error_msg);
 
 int srv_init(void) {
     if (pthread_mutex_init(&list.mtx, NULL) != 0) {
@@ -68,6 +69,7 @@ int srv_init(void) {
     }
 
     printf("Server listening on port %d\n", PORT);
+    printf("Default password: %s\n\n", admin_password);
     return 0;
 }
 
@@ -100,6 +102,7 @@ void srv_start(void) {
         snprintf(c->id, sizeof(c->id), "tmp_%d", csock);
         c->online = true;
         c->is_dev = false;
+        c->logged_in = false;
         c->device_type[0] = '\0';
 
         printf("[CONNECT] %s:%d\n", c->ip, c->port);
@@ -152,6 +155,42 @@ static void* handle_conn(void *arg) {
     return NULL;
 }
 
+static void send_error_response(Conn *c, const char *action, const char *error_msg) {
+    Message *r = calloc(1, sizeof(Message));
+    if (!r) return;
+
+    r->type = MSG_RESPONSE;
+    strncpy(r->from, "server", sizeof(r->from) - 1);
+    r->from[sizeof(r->from) - 1] = '\0';
+    strncpy(r->to, c->id, sizeof(r->to) - 1);
+    r->to[sizeof(r->to) - 1] = '\0';
+    
+    if (strcmp(action, "register") == 0) {
+        r->action = ACT_REGISTER;
+    } else if (strcmp(action, "login") == 0) {
+        r->action = ACT_LOGIN;
+    } else if (strcmp(action, "change_password") == 0) {
+        r->action = ACT_CHANGE_PASSWORD;
+    } else {
+        r->action = ACT_CONTROL;
+    }
+    
+    r->timestamp = time(NULL);
+
+    struct json_object *d = json_object_new_object();
+    json_object_object_add(d, "status", json_object_new_string("error"));
+    json_object_object_add(d, "message", json_object_new_string(error_msg));
+    r->data = d;
+
+    char *js = create_msg(r);
+    if (js) {
+        send(c->sock, js, strlen(js), 0);
+        send(c->sock, "\n", 1, 0);
+        free(js);
+    }
+    free_msg(r);
+}
+
 static void handle_msg(Conn *c, const char *json) {
     Message *m = parse_msg(json);
     if (!m) {
@@ -166,11 +205,13 @@ static void handle_msg(Conn *c, const char *json) {
         strncpy(c->id, m->from, sizeof(c->id) - 1);
         c->id[sizeof(c->id) - 1] = '\0';
         c->is_dev = true;
+        c->logged_in = true;
 
         struct json_object *data = (struct json_object*)m->data;
         struct json_object *dev_type;
         if (json_object_object_get_ex(data, "device_type", &dev_type)) {
-            strncpy(c->device_type, json_object_get_string(dev_type), sizeof(c->device_type) - 1);
+            strncpy(c->device_type, json_object_get_string(dev_type), 
+                    sizeof(c->device_type) - 1);
             c->device_type[sizeof(c->device_type) - 1] = '\0';
         }
 
@@ -214,10 +255,26 @@ static void handle_msg(Conn *c, const char *json) {
         printf("[REGISTER] Device: %s (%s)\n", c->id, c->device_type);
     }
     else if (m->action == ACT_LOGIN) {
+        struct json_object *data = (struct json_object*)m->data;
+        struct json_object *pass_obj;
+        
+        const char *provided_password = NULL;
+        if (json_object_object_get_ex(data, "password", &pass_obj)) {
+            provided_password = json_object_get_string(pass_obj);
+        }
+
+        if (!provided_password || strcmp(provided_password, admin_password) != 0) {
+            printf("[LOGIN] FAILED - wrong password from %s\n", m->from);
+            send_error_response(c, "login", "wrong_password");
+            free_msg(m);
+            return;
+        }
+
         strncpy(c->id, m->from, sizeof(c->id) - 1);
         c->id[sizeof(c->id) - 1] = '\0';
         c->is_dev = false;
-        //khong luu duoc danh sach, loi nay
+        c->logged_in = true;
+        
         pthread_mutex_lock(&list.mtx);
         bool found = false;
         for (int i = 0; i < list.cnt; i++) {
@@ -255,15 +312,79 @@ static void handle_msg(Conn *c, const char *json) {
             }
             free_msg(r);
         }
-        printf("[LOGIN] Client: %s\n", c->id);
+        printf("[LOGIN] SUCCESS - Client: %s\n", c->id);
+    }
+    else if (m->action == ACT_CHANGE_PASSWORD) {
+        if (!c->logged_in) {
+            printf("[CHANGE_PASSWORD] Rejected - not authenticated\n");
+            send_error_response(c, "change_password", "not_authenticated");
+            free_msg(m);
+            return;
+        }
+
+        struct json_object *data = (struct json_object*)m->data;
+        struct json_object *oldp, *newp;
+
+        Message *r = calloc(1, sizeof(Message));
+        r->type = MSG_RESPONSE;
+        strcpy(r->from, "server");
+        strcpy(r->to, m->from);
+        r->action = ACT_CHANGE_PASSWORD;
+        r->timestamp = time(NULL);
+
+        struct json_object *res = json_object_new_object();
+
+        if (json_object_object_get_ex(data, "old_password", &oldp) &&
+            json_object_object_get_ex(data, "new_password", &newp)) {
+
+            const char *oldpw = json_object_get_string(oldp);
+            const char *newpw = json_object_get_string(newp);
+
+            if (strcmp(oldpw, admin_password) == 0) {
+                strncpy(admin_password, newpw, sizeof(admin_password) - 1);
+                admin_password[sizeof(admin_password) - 1] = '\0';
+                json_object_object_add(res, "status",
+                    json_object_new_string("success"));
+                printf("[CHANGE_PASSWORD] Password changed by %s\n", c->id);
+                c->logged_in = false;
+            } else {
+                json_object_object_add(res, "status",
+                    json_object_new_string("wrong_password"));
+                printf("[CHANGE_PASSWORD] Wrong old password from %s\n", c->id);
+            }
+        } else {
+            json_object_object_add(res, "status",
+                json_object_new_string("invalid_request"));
+        }
+
+        r->data = res;
+
+        char *js = create_msg(r);
+        send(c->sock, js, strlen(js), 0);
+        send(c->sock, "\n", 1, 0);
+
+        free(js);
+        free_msg(r);
     }
     else if (m->action == ACT_LIST_DEVICES) {
+        if (!c->logged_in) {
+            printf("[LIST_DEVICES] Rejected - not authenticated\n");
+            send_error_response(c, "list_devices", "not_authenticated");
+            free_msg(m);
+            return;
+        }
         handle_list_devices(c);
     }
     else if (m->action == ACT_HEARTBEAT) {
         printf("[HEARTBEAT] From %s\n", m->from);
     }
     else {
+        if (!c->logged_in && !c->is_dev) {
+            printf("[CONTROL] Rejected - not authenticated\n");
+            send_error_response(c, "control", "not_authenticated");
+            free_msg(m);
+            return;
+        }
         route_msg(m);
     }
 
@@ -353,4 +474,3 @@ void srv_stop(void) {
     pthread_mutex_destroy(&list.mtx);
     printf("Server stopped\n");
 }
-
