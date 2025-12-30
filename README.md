@@ -2,7 +2,7 @@
 
 Hệ thống IoT điều khiển thiết bị thông minh với kiến trúc 3 tầng: GTK Client - C11 Server - ESP32 Hardware.
 
-## 📋 Tổng quan
+## Tổng quan
 
 - **Server:** C11 multi-threaded TCP server (Ubuntu)
 - **Client:** GTK3 GUI application (Ubuntu)
