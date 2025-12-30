@@ -10,37 +10,14 @@ Hệ thống IoT điều khiển thiết bị thông minh với kiến trúc 3 t
 - **Protocol:** JSON over TCP
 - **Port:** 6666
 
-## 🏗️ Kiến trúc
+## Kiến trúc
 ```
 GTK Client (C) ←→ Ubuntu C11 Server ←→ ESP32 (Arduino)
    (GUI)              (Gateway)          (Hardware)
 ```
 
-## ✨ Tính năng
 
-### Đã triển khai (11/20 điểm)
-
-- ✅ Xử lý truyền dòng (JSON delimiter)
-- ✅ Socket I/O với multi-threading
-- ✅ Xác thực người dùng (login)
-- ✅ Đăng ký thiết bị tự động
-- ✅ Quét và liệt kê thiết bị
-- ✅ Kết nối và quản lý nhiều thiết bị
-- ✅ Điều khiển bật/tắt thiết bị
-- ✅ Truy vấn trạng thái thiết bị
-- ✅ Heartbeat monitoring (30s)
-
-### Có thể mở rộng
-
-- Đổi mật khẩu thiết bị
-- Điều khiển tốc độ quạt (PWM)
-- Chế độ điều hòa (cool/heat/dry)
-- Tính toán điện năng tiêu thụ
-- Hẹn giờ bật/tắt
-- Ghi log hoạt động
-- Quản lý nhà/phòng/thiết bị
-
-## 🛠️ Công nghệ
+## Công nghệ
 
 **Server:**
 - C11 standard
@@ -59,7 +36,7 @@ GTK Client (C) ←→ Ubuntu C11 Server ←→ ESP32 (Arduino)
 - ArduinoJson
 - Adafruit SSD1306 (OLED)
 
-## 📦 Cài đặt
+## Cài đặt
 
 ### Yêu cầu
 
@@ -94,7 +71,7 @@ make
 3. Sửa WiFi SSID/Password và Server IP trong code
 4. Upload
 
-## 🚀 Chạy hệ thống
+## Chạy hệ thống
 
 ### 1. Chạy Server
 ```bash
@@ -120,7 +97,7 @@ make run
 - Chọn thiết bị từ dropdown
 - Click **Turn ON/OFF** để điều khiển
 
-## 📡 Giao thức JSON
+## Giao thức JSON
 
 ### Register (ESP32 → Server)
 ```json
@@ -169,7 +146,7 @@ make run
 }
 ```
 
-## 🔌 Cấu hình phần cứng
+## Cấu hình phần cứng
 
 ### ESP32 Pinout
 
@@ -183,7 +160,7 @@ make run
   - LED Green: GPIO 12 (Online)
   - LED Red: GPIO 13 (Offline/Error)
 
-## 🌐 Cấu hình mạng
+## Cấu hình mạng
 
 ### VMware (nếu dùng Ubuntu trong VM)
 
@@ -199,7 +176,7 @@ make run
 - Client (Ubuntu): 127.0.0.1 hoặc 192.168.92.130
 - ESP32: DHCP (ví dụ: 172.11.23.110)
 
-## 📁 Cấu trúc thư mục
+## Cấu trúc thư mục
 ```
 homeserver/
 ├── server/
@@ -222,7 +199,7 @@ homeserver/
 └── README.md
 ```
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### ESP32 không kết nối Server
 
