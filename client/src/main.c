@@ -225,6 +225,37 @@ void on_control_clicked(GtkWidget *w, gpointer d) {
     on_refresh_logs_clicked(NULL, app);
 }
 
+void on_fan_speed_clicked(GtkWidget *w, gpointer d) {
+    AppData *app = d;
+    if (!app->logged_in) {
+        show_error(app->window, "Login first");
+        return;
+    }
+
+    gchar *sel = gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(app->device_combo));
+    if (!sel) {
+        show_error(app->window, "Select a device");
+        return;
+    }
+
+    char did[64];
+    sscanf(sel, "%63s", did);
+    g_free(sel);
+
+    int speed = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(w), "speed"));
+
+    MessageBuilder *mb = msg_builder_create("request", "gtk_client", did, "control");
+    msg_builder_add_bool(mb, "state", TRUE);
+    msg_builder_add_int(mb, "speed", speed);
+
+    ResponseParser *rp = send_request(app, mb, "Set fan speed failed");
+    msg_builder_free(mb);
+    if (!rp) return;
+
+    response_free(rp);
+    on_refresh_logs_clicked(NULL, app);
+}
+
 void quick_set_timer(AppData *app, int delay_seconds, gboolean state) {
     if (!app->logged_in) {
         show_error(app->window, "Login first");
@@ -514,7 +545,6 @@ int main(int argc, char *argv[]) {
     app.notebook = gtk_notebook_new();
     gtk_box_pack_start(GTK_BOX(vbox_main), app.notebook, TRUE, TRUE, 0);
 
-    // PAGE 1: CONTROL
     GtkWidget *page1 = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
     gtk_container_set_border_width(GTK_CONTAINER(page1), 10);
     gtk_notebook_append_page(GTK_NOTEBOOK(app.notebook), page1, gtk_label_new("Control"));
@@ -541,6 +571,29 @@ int main(int argc, char *argv[]) {
 
     app.control_label = gtk_label_new("State: unknown");
     gtk_box_pack_start(GTK_BOX(page1), app.control_label, FALSE, FALSE, 0);
+
+    gtk_box_pack_start(GTK_BOX(page1), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE, 5);
+
+    gtk_box_pack_start(GTK_BOX(page1), gtk_label_new("Fan Speed:"), FALSE, FALSE, 0);
+
+    GtkWidget *speed_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    gtk_box_pack_start(GTK_BOX(page1), speed_box, FALSE, FALSE, 0);
+
+    GtkWidget *btn_s1 = gtk_button_new_with_label("Speed 1");
+    GtkWidget *btn_s2 = gtk_button_new_with_label("Speed 2");
+    GtkWidget *btn_s3 = gtk_button_new_with_label("Speed 3");
+
+    g_object_set_data(G_OBJECT(btn_s1), "speed", GINT_TO_POINTER(1));
+    g_object_set_data(G_OBJECT(btn_s2), "speed", GINT_TO_POINTER(2));
+    g_object_set_data(G_OBJECT(btn_s3), "speed", GINT_TO_POINTER(3));
+
+    g_signal_connect(btn_s1, "clicked", G_CALLBACK(on_fan_speed_clicked), &app);
+    g_signal_connect(btn_s2, "clicked", G_CALLBACK(on_fan_speed_clicked), &app);
+    g_signal_connect(btn_s3, "clicked", G_CALLBACK(on_fan_speed_clicked), &app);
+
+    gtk_box_pack_start(GTK_BOX(speed_box), btn_s1, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(speed_box), btn_s2, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(speed_box), btn_s3, TRUE, TRUE, 0);
 
     gtk_box_pack_start(GTK_BOX(page1), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE, 5);
 
@@ -572,31 +625,31 @@ int main(int argc, char *argv[]) {
     gtk_grid_attach(GTK_GRID(timer_grid), gtk_label_new("30s:"), 0, 2, 1, 1);
     gtk_grid_attach(GTK_GRID(timer_grid), btn_30s_on, 1, 2, 1, 1);
     gtk_grid_attach(GTK_GRID(timer_grid), btn_30s_off, 2, 2, 1, 1);
-GtkWidget *btn_60s_on = gtk_button_new_with_label("ON 60s");
-GtkWidget *btn_60s_off = gtk_button_new_with_label("OFF 60s");
-g_signal_connect(btn_60s_on, "clicked", G_CALLBACK(on_timer_60s_on), &app);
-g_signal_connect(btn_60s_off, "clicked", G_CALLBACK(on_timer_60s_off), &app);
-gtk_grid_attach(GTK_GRID(timer_grid), gtk_label_new("60s:"), 0, 3, 1, 1);
-gtk_grid_attach(GTK_GRID(timer_grid), btn_60s_on, 1, 3, 1, 1);
-gtk_grid_attach(GTK_GRID(timer_grid), btn_60s_off, 2, 3, 1, 1);
 
-GtkWidget *btn_120s_on = gtk_button_new_with_label("ON 120s");
-GtkWidget *btn_120s_off = gtk_button_new_with_label("OFF 120s");
-g_signal_connect(btn_120s_on, "clicked", G_CALLBACK(on_timer_120s_on), &app);
-g_signal_connect(btn_120s_off, "clicked", G_CALLBACK(on_timer_120s_off), &app);
-gtk_grid_attach(GTK_GRID(timer_grid), gtk_label_new("120s:"), 0, 4, 1, 1);
-gtk_grid_attach(GTK_GRID(timer_grid), btn_120s_on, 1, 4, 1, 1);
-gtk_grid_attach(GTK_GRID(timer_grid), btn_120s_off, 2, 4, 1, 1);
+    GtkWidget *btn_60s_on = gtk_button_new_with_label("ON 60s");
+    GtkWidget *btn_60s_off = gtk_button_new_with_label("OFF 60s");
+    g_signal_connect(btn_60s_on, "clicked", G_CALLBACK(on_timer_60s_on), &app);
+    g_signal_connect(btn_60s_off, "clicked", G_CALLBACK(on_timer_60s_off), &app);
+    gtk_grid_attach(GTK_GRID(timer_grid), gtk_label_new("60s:"), 0, 3, 1, 1);
+    gtk_grid_attach(GTK_GRID(timer_grid), btn_60s_on, 1, 3, 1, 1);
+    gtk_grid_attach(GTK_GRID(timer_grid), btn_60s_off, 2, 3, 1, 1);
 
-GtkWidget *btn_300s_on = gtk_button_new_with_label("ON 300s");
-GtkWidget *btn_300s_off = gtk_button_new_with_label("OFF 300s");
-g_signal_connect(btn_300s_on, "clicked", G_CALLBACK(on_timer_300s_on), &app);
-g_signal_connect(btn_300s_off, "clicked", G_CALLBACK(on_timer_300s_off), &app);
-gtk_grid_attach(GTK_GRID(timer_grid), gtk_label_new("300s:"), 0, 5, 1, 1);
-gtk_grid_attach(GTK_GRID(timer_grid), btn_300s_on, 1, 5, 1, 1);
-gtk_grid_attach(GTK_GRID(timer_grid), btn_300s_off, 2, 5, 1, 1);
+    GtkWidget *btn_120s_on = gtk_button_new_with_label("ON 120s");
+    GtkWidget *btn_120s_off = gtk_button_new_with_label("OFF 120s");
+    g_signal_connect(btn_120s_on, "clicked", G_CALLBACK(on_timer_120s_on), &app);
+    g_signal_connect(btn_120s_off, "clicked", G_CALLBACK(on_timer_120s_off), &app);
+    gtk_grid_attach(GTK_GRID(timer_grid), gtk_label_new("120s:"), 0, 4, 1, 1);
+    gtk_grid_attach(GTK_GRID(timer_grid), btn_120s_on, 1, 4, 1, 1);
+    gtk_grid_attach(GTK_GRID(timer_grid), btn_120s_off, 2, 4, 1, 1);
 
-// PAGE 2: TIMERS
+    GtkWidget *btn_300s_on = gtk_button_new_with_label("ON 300s");
+    GtkWidget *btn_300s_off = gtk_button_new_with_label("OFF 300s");
+    g_signal_connect(btn_300s_on, "clicked", G_CALLBACK(on_timer_300s_on), &app);
+    g_signal_connect(btn_300s_off, "clicked", G_CALLBACK(on_timer_300s_off), &app);
+    gtk_grid_attach(GTK_GRID(timer_grid), gtk_label_new("300s:"), 0, 5, 1, 1);
+    gtk_grid_attach(GTK_GRID(timer_grid), btn_300s_on, 1, 5, 1, 1);
+    gtk_grid_attach(GTK_GRID(timer_grid), btn_300s_off, 2, 5, 1, 1);
+
 GtkWidget *page2 = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
 gtk_container_set_border_width(GTK_CONTAINER(page2), 10);
 gtk_notebook_append_page(GTK_NOTEBOOK(app.notebook), page2, gtk_label_new("Timers"));
@@ -628,7 +681,6 @@ gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(app.timer_list_view), 
 
 gtk_container_add(GTK_CONTAINER(scroll_timer), app.timer_list_view);
 
-// PAGE 3: LOGS
 GtkWidget *page3 = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
 gtk_container_set_border_width(GTK_CONTAINER(page3), 10);
 gtk_notebook_append_page(GTK_NOTEBOOK(app.notebook), page3, gtk_label_new("Activity Logs"));
